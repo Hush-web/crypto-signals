@@ -1,181 +1,125 @@
-"""
-database.py — SQLite persistence for generated signals.
-
-Table: signals
-    id            INTEGER PRIMARY KEY
-    timestamp     TEXT     (ISO 8601, UTC)
-    coin          TEXT
-    action        TEXT     (BUY / SELL)
-    entry_price   REAL
-    target        REAL
-    stop_loss     REAL
-    confidence    TEXT     (HIGH / MEDIUM / LOW)
-    reason        TEXT
-    status        TEXT     (pending / win / loss)
-"""
-
+# database.py — with automatic migration
 import sqlite3
 import csv
-from contextlib import contextmanager
-from datetime import datetime, timezone
-
 import config
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS signals (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL,
-    coin TEXT NOT NULL,
-    action TEXT NOT NULL,
-    entry_price REAL NOT NULL,
-    target REAL NOT NULL,
-    stop_loss REAL NOT NULL,
-    confidence TEXT NOT NULL,
-    reason TEXT,
-    status TEXT NOT NULL DEFAULT 'pending'
-);
-"""
+def init_db():
+    conn = sqlite3.connect(config.DB_PATH)
+    c = conn.cursor()
+    
+    # Create signals table (if not exists)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS signals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            coin TEXT,
+            action TEXT,
+            entry_price REAL,
+            target REAL,
+            stop_loss REAL,
+            confidence TEXT,
+            reason TEXT
+        )
+    ''')
+    
+    # Add new columns if they don't exist (migration)
+    c.execute("PRAGMA table_info(signals)")
+    existing_cols = [row[1] for row in c.fetchall()]
+    
+    new_cols = {
+        'status': 'TEXT DEFAULT "OPEN"',
+        'exit_price': 'REAL DEFAULT 0',
+        'pnl_pct': 'REAL DEFAULT 0',
+        'exit_reason': 'TEXT DEFAULT NULL'
+    }
+    
+    for col, definition in new_cols.items():
+        if col not in existing_cols:
+            c.execute(f'ALTER TABLE signals ADD COLUMN {col} {definition}')
+    
+    # Create polls table
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS polls (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT,
+            question TEXT,
+            up_votes INTEGER DEFAULT 0,
+            down_votes INTEGER DEFAULT 0,
+            result TEXT
+        )
+    ''')
+    
+    conn.commit()
+    conn.close()
+    print("[DB] Schema ready (migration applied if needed)")
 
+def insert_signal(signal):
+    conn = sqlite3.connect(config.DB_PATH)
+    c = conn.cursor()
+    c.execute('''
+        INSERT INTO signals (timestamp, coin, action, entry_price, target, stop_loss, confidence, reason)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (signal['timestamp'], signal['coin'], signal['action'],
+          signal['entry_price'], signal['target'], signal['stop_loss'],
+          signal['confidence'], signal['reason']))
+    conn.commit()
+    conn.close()
 
-@contextmanager
-def get_conn(db_path: str = None):
-    path = db_path or config.DB_PATH
-    conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row
+def get_open_trades():
+    conn = sqlite3.connect(config.DB_PATH)
+    c = conn.cursor()
+    c.execute('SELECT id, coin, action, entry_price, target, stop_loss FROM signals WHERE status = "OPEN"')
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+def close_trade(trade_id, exit_price, pnl_pct, reason):
+    conn = sqlite3.connect(config.DB_PATH)
+    c = conn.cursor()
+    c.execute('''
+        UPDATE signals SET status = 'CLOSED', exit_price = ?, pnl_pct = ?, exit_reason = ?
+        WHERE id = ?
+    ''', (exit_price, pnl_pct, reason, trade_id))
+    conn.commit()
+    conn.close()
+
+def get_pnl_metrics(days=30):
+    conn = sqlite3.connect(config.DB_PATH)
+    c = conn.cursor()
     try:
-        yield conn
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def init_db(db_path: str = None):
-    """Create the signals table if it doesn't already exist."""
-    with get_conn(db_path) as conn:
-        conn.execute(SCHEMA)
-
-
-def insert_signal(signal: dict, db_path: str = None) -> int:
-    """Insert a signal dict and return its new row id."""
-    with get_conn(db_path) as conn:
-        cur = conn.execute(
-            """
-            INSERT INTO signals
-                (timestamp, coin, action, entry_price, target, stop_loss,
-                 confidence, reason, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                signal.get("timestamp", datetime.now(timezone.utc).isoformat()),
-                signal["coin"],
-                signal["action"],
-                signal["entry_price"],
-                signal["target"],
-                signal["stop_loss"],
-                signal["confidence"],
-                signal.get("reason", ""),
-                signal.get("status", "pending"),
-            ),
-        )
-        return cur.lastrowid
-
-
-def update_status(signal_id: int, status: str, db_path: str = None):
-    """Mark a signal as 'win', 'loss', or back to 'pending'."""
-    if status not in ("pending", "win", "loss"):
-        raise ValueError("status must be one of: pending, win, loss")
-    with get_conn(db_path) as conn:
-        conn.execute(
-            "UPDATE signals SET status = ? WHERE id = ?", (status, signal_id)
-        )
-
-
-def get_all_signals(db_path: str = None):
-    with get_conn(db_path) as conn:
-        rows = conn.execute(
-            "SELECT * FROM signals ORDER BY timestamp DESC"
-        ).fetchall()
-        return [dict(r) for r in rows]
-
-
-def get_pending_signals(coin: str = None, db_path: str = None):
-    with get_conn(db_path) as conn:
-        if coin:
-            rows = conn.execute(
-                "SELECT * FROM signals WHERE status = 'pending' AND coin = ?",
-                (coin,),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM signals WHERE status = 'pending'"
-            ).fetchall()
-        return [dict(r) for r in rows]
-
-
-def get_win_rate(db_path: str = None) -> dict:
-    """Return win/loss counts and win rate % across all resolved signals."""
-    with get_conn(db_path) as conn:
-        wins = conn.execute(
-            "SELECT COUNT(*) FROM signals WHERE status = 'win'"
-        ).fetchone()[0]
-        losses = conn.execute(
-            "SELECT COUNT(*) FROM signals WHERE status = 'loss'"
-        ).fetchone()[0]
-        pending = conn.execute(
-            "SELECT COUNT(*) FROM signals WHERE status = 'pending'"
-        ).fetchone()[0]
-
-    resolved = wins + losses
-    win_rate = (wins / resolved * 100) if resolved else 0.0
+        c.execute('''
+            SELECT pnl_pct FROM signals WHERE status = 'CLOSED' AND timestamp > datetime('now', ?)
+        ''', (f'-{days} days',))
+        rows = c.fetchall()
+    except sqlite3.OperationalError:
+        # Column might not exist yet; return empty
+        rows = []
+    conn.close()
+    if not rows:
+        return {'total_trades': 0, 'wins': 0, 'losses': 0, 'win_rate': 0, 'total_pnl': 0, 'avg_win': 0, 'avg_loss': 0}
+    pnls = [r[0] for r in rows]
+    wins = [p for p in pnls if p > 0]
+    losses = [p for p in pnls if p < 0]
     return {
-        "wins": wins,
-        "losses": losses,
-        "pending": pending,
-        "resolved": resolved,
-        "win_rate_pct": round(win_rate, 2),
+        'total_trades': len(rows),
+        'wins': len(wins),
+        'losses': len(losses),
+        'win_rate': len(wins) / len(rows) * 100 if rows else 0,
+        'total_pnl': sum(pnls),
+        'avg_win': sum(wins) / len(wins) if wins else 0,
+        'avg_loss': sum(losses) / len(losses) if losses else 0,
     }
 
-
-def export_csv(csv_path: str = None, db_path: str = None):
-    """Dump the full signals table to a CSV file (used for the GitHub Actions artifact)."""
-    csv_path = csv_path or config.CSV_EXPORT_PATH
-    signals = get_all_signals(db_path)
-    fieldnames = [
-        "id", "timestamp", "coin", "action", "entry_price", "target",
-        "stop_loss", "confidence", "reason", "status",
-    ]
-    with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        for row in signals:
-            writer.writerow(row)
-    return csv_path
-
-
-def auto_resolve_pending(current_prices: dict, db_path: str = None):
-    """
-    Optional helper: given {coin: current_price}, automatically mark pending
-    signals as 'win' if price hit target, 'loss' if it hit stop_loss.
-    Leaves the signal as 'pending' if neither level has been reached yet.
-    """
-    pending = get_pending_signals(db_path=db_path)
-    updated = []
-    for sig in pending:
-        price = current_prices.get(sig["coin"])
-        if price is None:
-            continue
-        if sig["action"] == "BUY":
-            if price >= sig["target"]:
-                update_status(sig["id"], "win", db_path)
-                updated.append((sig["id"], "win"))
-            elif price <= sig["stop_loss"]:
-                update_status(sig["id"], "loss", db_path)
-                updated.append((sig["id"], "loss"))
-        elif sig["action"] == "SELL":
-            if price <= sig["target"]:
-                update_status(sig["id"], "win", db_path)
-                updated.append((sig["id"], "win"))
-            elif price >= sig["stop_loss"]:
-                update_status(sig["id"], "loss", db_path)
-                updated.append((sig["id"], "loss"))
-    return updated
+def export_csv(path=None):
+    path = path or config.CSV_EXPORT_PATH
+    conn = sqlite3.connect(config.DB_PATH)
+    c = conn.cursor()
+    c.execute('SELECT * FROM signals ORDER BY id DESC')
+    rows = c.fetchall()
+    cols = [desc[0] for desc in c.description]
+    conn.close()
+    with open(path, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(cols)
+        writer.writerows(rows)
+    return path

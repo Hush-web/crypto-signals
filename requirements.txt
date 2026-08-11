@@ -1,7 +1,6 @@
-yfinance>=0.2.40
-pandas>=2.0.0
-pandas_ta>=0.4.67b0
-requests>=2.31.0
-numpy>=1.26.0
+yfinance
+pandas
+numpy
 python-telegram-bot
 python-dotenv
+requests

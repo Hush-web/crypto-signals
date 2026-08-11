@@ -1,52 +1,43 @@
-name: Crypto Signal Bot
+name: Auto Crypto Signals
 
 on:
   schedule:
-    # Runs every 6 hours (00:00, 06:00, 12:00, 18:00 UTC)
-    - cron: "0 */3 * * *"
-  workflow_dispatch: {}   # allows manual "Run workflow" button in the Actions tab
-
-permissions:
-  contents: write   # needed so the workflow can commit the updated signals.db back to the repo
+    - cron: "*/30 * * * *"   # Signals every 30 minutes
+    - cron: "0 8 * * *"      # Daily digest at 8 AM
+  workflow_dispatch:
 
 jobs:
-  run-signals:
+  run:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
+      
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-
-      - name: Cache pip dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-
+          python-version: '3.10'
+      
       - name: Install dependencies
         run: pip install -r requirements.txt
-
-      - name: Run signal generator
+      
+      - name: Run engine
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py
-
-      - name: Upload signals CSV as artifact
+      
+      - name: Commit database
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add signals.db
+          git diff --staged --quiet || git commit -m "Update DB [skip ci]"
+          git push
+        continue-on-error: true
+      
+      - name: Upload CSV
         uses: actions/upload-artifact@v4
         with:
-          name: signals-csv-${{ github.run_number }}
+          name: signals-export
           path: signals_export.csv
-          retention-days: 90
-
-      - name: Commit updated database back to repo
-        run: |
-          git config user.name "signal-bot"
-          git config user.email "signal-bot@users.noreply.github.com"
-          git add signals.db signals_export.csv
-          git diff --cached --quiet || git commit -m "Update signals [skip ci]"
-          git push
+          retention-days: 30

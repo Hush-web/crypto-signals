@@ -1,21 +1,13 @@
-# backtest.py
+# backtest.py — RSI Mean Reversion Strategy
 import sys
 import pandas as pd
 import numpy as np
 import yfinance as yf
-from datetime import datetime
 import config
 import signals
 
 def backtest(coin='BTC-USD', days=180):
-    """
-    Full backtest for SuperTrend strategy.
-    Simulates trades based on SuperTrend crossovers.
-    Prints performance metrics.
-    """
-    print(f"\n🔍 Backtesting {coin} over {days} days...\n")
-    
-    # Fetch data
+    print(f"\n🔍 Backtesting RSI Mean Reversion on {coin} over {days} days...\n")
     df = signals.fetch_ohlcv(coin, period=f"{days}d", interval="1h")
     df = signals.add_indicators(df)
     
@@ -23,31 +15,27 @@ def backtest(coin='BTC-USD', days=180):
         print("No data.")
         return
 
-    # We'll simulate trades
+    # Simulate trades
     trades = []
     in_position = False
     entry_price = 0
     entry_time = None
     trade_direction = None  # 'BUY' or 'SELL'
 
-    # Iterate through each row (skip first row because we need previous trend)
-    for i in range(1, len(df)):
-        prev_trend = df['SUPERTREND'].iloc[i-1]
-        current_trend = df['SUPERTREND'].iloc[i]
+    for i in range(len(df)):
+        rsi = df['RSI'].iloc[i]
         price = df['Close'].iloc[i]
         time = df.index[i]
 
-        # Check for crossover
-        # BUY signal: trend changed from -1 to 1 (bearish to bullish)
-        if prev_trend == -1 and current_trend == 1:
+        # BUY signal: RSI < 25 (oversold)
+        if rsi < 25:
             if not in_position:
-                # Enter BUY
                 entry_price = price
                 entry_time = time
                 in_position = True
                 trade_direction = 'BUY'
             elif in_position and trade_direction == 'SELL':
-                # Close previous SELL trade and open BUY
+                # Close SELL and open BUY
                 exit_price = price
                 trades.append({
                     'entry': entry_price,
@@ -61,16 +49,15 @@ def backtest(coin='BTC-USD', days=180):
                 entry_time = time
                 trade_direction = 'BUY'
 
-        # SELL signal: trend changed from 1 to -1 (bullish to bearish)
-        elif prev_trend == 1 and current_trend == -1:
+        # SELL signal: RSI > 75 (overbought)
+        elif rsi > 75:
             if not in_position:
-                # Enter SELL
                 entry_price = price
                 entry_time = time
                 in_position = True
                 trade_direction = 'SELL'
             elif in_position and trade_direction == 'BUY':
-                # Close previous BUY trade and open SELL
+                # Close BUY and open SELL
                 exit_price = price
                 trades.append({
                     'entry': entry_price,
@@ -100,7 +87,6 @@ def backtest(coin='BTC-USD', days=180):
         print("No trades were generated.")
         return
 
-    # --- Performance Metrics ---
     df_trades = pd.DataFrame(trades)
     wins = df_trades[df_trades['profit_pct'] > 0]
     losses = df_trades[df_trades['profit_pct'] <= 0]
@@ -112,10 +98,9 @@ def backtest(coin='BTC-USD', days=180):
     total_return = df_trades['profit_pct'].sum()
     avg_trade = df_trades['profit_pct'].mean()
     max_drawdown = df_trades['profit_pct'].min()
-    # Buy & hold return
     buy_hold_return = (df['Close'].iloc[-1] - df['Close'].iloc[0]) / df['Close'].iloc[0] * 100
 
-    print(f"--- {coin} Backtest Results ---")
+    print(f"--- {coin} Backtest Results (RSI Mean Reversion) ---")
     print(f"  Total trades:        {total_trades}")
     print(f"  Win rate:            {win_rate:.2f}%")
     print(f"  Avg win:             {avg_win:.2f}%")
@@ -126,7 +111,6 @@ def backtest(coin='BTC-USD', days=180):
     print(f"  Max drawdown:        {max_drawdown:.2f}%")
     print(f"  Buy & hold return:   {buy_hold_return:.2f}%")
     print(f"  Beat buy & hold:     {'YES' if total_return > buy_hold_return else 'NO'}")
-    print(f"\n  Exit reasons:      (not tracked in this simple backtest)")
     print("  Verdict:           ", "✅ MAYBE profitable" if total_return > 0 and win_rate > 50 else "❌ likely not profitable")
 
 if __name__ == "__main__":
