@@ -34,7 +34,9 @@ def send_poll(question, options=['🟢 UP', '🔴 DOWN']):
 def send_signal(signal):
     if signal['action'] == 'HOLD':
         return
+    
     tag = get_signal_tag(signal['confidence'])
+    
     msg = f"""
 {tag} — {signal['coin']}
 

@@ -26,34 +26,6 @@ def fetch_ohlcv(symbol, period=None, interval=None):
     return df
 
 def generate_signal(symbol):
-    """
-    Generate a signal for a single coin.
-    """
-    # ============================================================
-    # FORCE TEST — Uncomment below to force a BUY for BTC-USD
-    # ============================================================
-    # if symbol == 'BTC-USD':
-    #     return {
-    #         'coin': symbol,
-    #         'action': 'BUY',
-    #         'entry_price': 61000,
-    #         'target': 62830,
-    #         'stop_loss': 59475,
-    #         'confidence': 'HIGH',
-    #         'reason': 'FORCED TEST SIGNAL',
-    #         'votes': {'BUY': 5, 'SELL': 0, 'HOLD': 0},
-    #         'strategy_results': [
-    #             {'strategy': 'RSIStrategy', 'action': 'BUY', 'confidence': 'HIGH', 'reason': 'Forced test'},
-    #             {'strategy': 'EMATrendStrategy', 'action': 'BUY', 'confidence': 'HIGH', 'reason': 'Forced test'},
-    #             {'strategy': 'MACDStrategy', 'action': 'BUY', 'confidence': 'HIGH', 'reason': 'Forced test'},
-    #             {'strategy': 'BollingerStrategy', 'action': 'BUY', 'confidence': 'HIGH', 'reason': 'Forced test'},
-    #             {'strategy': 'SuperTrendStrategy', 'action': 'BUY', 'confidence': 'HIGH', 'reason': 'Forced test'},
-    #         ],
-    #         'sentiment': {'value': 30, 'label': 'FEAR'},
-    #         'whale': {'signal': 'NEUTRAL', 'reason': 'None'},
-    #         'timestamp': datetime.now(timezone.utc).isoformat()
-    #     }
-
     df = fetch_ohlcv(symbol)
     tech = analyze_strategies(df)
 
@@ -90,13 +62,23 @@ def generate_signal(symbol):
     elif whale_signal == 'BEARISH':
         sell_votes += 2
 
-    # === LOWERED THRESHOLD: 2 votes instead of 4 ===
+    # === NEW: Confidence based on vote count ===
     if buy_votes > sell_votes and buy_votes >= 2:
         action = 'BUY'
-        confidence = 'MEDIUM'   # Lower confidence because threshold is lower
+        if buy_votes >= 5:
+            confidence = 'HIGH'   # Sniper Mode
+        elif buy_votes >= 3:
+            confidence = 'MEDIUM'  # Laser Locked
+        else:
+            confidence = 'LOW'     # Scouting
     elif sell_votes > buy_votes and sell_votes >= 2:
         action = 'SELL'
-        confidence = 'MEDIUM'
+        if sell_votes >= 5:
+            confidence = 'HIGH'   # Sniper Mode
+        elif sell_votes >= 3:
+            confidence = 'MEDIUM'  # Laser Locked
+        else:
+            confidence = 'LOW'     # Scouting
     else:
         action = 'HOLD'
         confidence = 'LOW'

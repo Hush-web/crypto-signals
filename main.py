@@ -126,6 +126,9 @@ def send_daily_digest():
 ⚠️ Not financial advice. Trade at your own risk.
 """
     telegram.send_digest(msg)
+    
+    # === SEND POLL ===
+    telegram.send_poll("📊 Community Sentiment: Will BTC be UP or DOWN in 24h?")
 
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == '--digest':
