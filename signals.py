@@ -26,46 +26,83 @@ def fetch_ohlcv(symbol, period=None, interval=None):
     return df
 
 def generate_signal(symbol):
+    """
+    Generate a signal for a single coin.
+    """
+    # ============================================================
+    # FORCE TEST — Uncomment below to force a BUY for BTC-USD
+    # ============================================================
+    # if symbol == 'BTC-USD':
+    #     return {
+    #         'coin': symbol,
+    #         'action': 'BUY',
+    #         'entry_price': 61000,
+    #         'target': 62830,
+    #         'stop_loss': 59475,
+    #         'confidence': 'HIGH',
+    #         'reason': 'FORCED TEST SIGNAL',
+    #         'votes': {'BUY': 5, 'SELL': 0, 'HOLD': 0},
+    #         'strategy_results': [
+    #             {'strategy': 'RSIStrategy', 'action': 'BUY', 'confidence': 'HIGH', 'reason': 'Forced test'},
+    #             {'strategy': 'EMATrendStrategy', 'action': 'BUY', 'confidence': 'HIGH', 'reason': 'Forced test'},
+    #             {'strategy': 'MACDStrategy', 'action': 'BUY', 'confidence': 'HIGH', 'reason': 'Forced test'},
+    #             {'strategy': 'BollingerStrategy', 'action': 'BUY', 'confidence': 'HIGH', 'reason': 'Forced test'},
+    #             {'strategy': 'SuperTrendStrategy', 'action': 'BUY', 'confidence': 'HIGH', 'reason': 'Forced test'},
+    #         ],
+    #         'sentiment': {'value': 30, 'label': 'FEAR'},
+    #         'whale': {'signal': 'NEUTRAL', 'reason': 'None'},
+    #         'timestamp': datetime.now(timezone.utc).isoformat()
+    #     }
+
     df = fetch_ohlcv(symbol)
     tech = analyze_strategies(df)
-    
+
+    # --- DEBUG: Print individual strategy votes ---
+    print(f"\n[DEBUG] {symbol} strategy votes:")
+    for r in tech['strategy_results']:
+        print(f"  {r['strategy']}: {r['action']} ({r['confidence']})")
+    print(f"  Final: {tech['action']} ({tech['confidence']})")
+    print(f"  Votes: BUY={tech['votes']['BUY']} SELL={tech['votes']['SELL']} HOLD={tech['votes']['HOLD']}")
+
+    # Sentiment & Whale
     fear_val, fear_label = get_fear_greed()
     whale_signal, whale_reason = get_whale_sentiment()
-    
+
     # Combine votes
     buy_votes = 0
     sell_votes = 0
-    
+
     # Technical (weight: 3)
     if tech['action'] == 'BUY':
         buy_votes += 3
     elif tech['action'] == 'SELL':
         sell_votes += 3
-    
+
     # Sentiment (weight: 1)
     if fear_val < 25:
         buy_votes += 1
     elif fear_val > 75:
         sell_votes += 1
-    
+
     # Whale (weight: 2)
     if whale_signal == 'BULLISH':
         buy_votes += 2
     elif whale_signal == 'BEARISH':
         sell_votes += 2
-    
-    if buy_votes > sell_votes and buy_votes >= 4:
+
+    # === LOWERED THRESHOLD: 2 votes instead of 4 ===
+    if buy_votes > sell_votes and buy_votes >= 2:
         action = 'BUY'
-        confidence = 'HIGH'
-    elif sell_votes > buy_votes and sell_votes >= 4:
+        confidence = 'MEDIUM'   # Lower confidence because threshold is lower
+    elif sell_votes > buy_votes and sell_votes >= 2:
         action = 'SELL'
-        confidence = 'HIGH'
+        confidence = 'MEDIUM'
     else:
         action = 'HOLD'
         confidence = 'LOW'
-    
+
     price = df['Close'].iloc[-1]
-    
+
     if action == 'BUY':
         target = price * (1 + config.TARGET_PCT)
         stop = price * (1 - config.STOP_LOSS_PCT)
@@ -74,7 +111,7 @@ def generate_signal(symbol):
         stop = price * (1 + config.STOP_LOSS_PCT)
     else:
         target = stop = price
-    
+
     return {
         'coin': symbol,
         'action': action,
