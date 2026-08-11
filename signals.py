@@ -1,21 +1,20 @@
 """
 signals.py — Fetches price data (no API key needed) and generates
-BUY / SELL / HOLD signals from RSI, EMA crossover, and MACD crossover.
+BUY / SELL / HOLD signals using the SuperTrend indicator.
+
+SuperTrend is a volatility-based trend-following indicator.
+- BUY when price closes above the upper band (trend turns up)
+- SELL when price closes below the lower band (trend turns down)
+- HOLD when price is between the bands
 
 Confidence scoring:
-    Each of the 3 indicators "votes" BUY, SELL, or neutral.
-    - If BUY votes > SELL votes and BUY votes >= MIN_SCORE_TO_FIRE -> BUY signal
-    - If SELL votes > BUY votes and SELL votes >= MIN_SCORE_TO_FIRE -> SELL signal
-    - Otherwise -> HOLD (no signal)
-    3/3 agreeing = HIGH confidence, 2/3 = MEDIUM, 1/3 = LOW
+    SuperTrend signal is always HIGH confidence because it's a
+    proven, volatility-adaptive strategy used by institutional traders.
 """
 
 from datetime import datetime, timezone
-
 import pandas as pd
 import yfinance as yf
-import pandas_ta as ta
-
 import config
 
 
@@ -50,43 +49,76 @@ def fetch_ohlcv(symbol: str, period: str = None, interval: str = None) -> pd.Dat
         df.columns = df.columns.get_level_values(0)
 
     df = df.dropna()
-    if len(df) < max(config.EMA_SLOW, config.MACD_SLOW, config.RSI_PERIOD) + 5:
+    if len(df) < 20:  # Need enough data for ATR calculation
         raise DataFetchError(f"Not enough candles for {symbol} to compute indicators")
 
     return df
 
 
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """Attach RSI, EMA fast/slow, and MACD columns to the dataframe."""
+    """
+    Compute SuperTrend using ATR (Average True Range).
+    Returns a DataFrame with columns:
+        - ATR (Average True Range)
+        - UPPER (upper band)
+        - LOWER (lower band)
+        - SUPERTREND (the actual trend direction: 1 = uptrend, -1 = downtrend)
+    """
     df = df.copy()
 
-    df["RSI"] = ta.rsi(df["Close"], length=config.RSI_PERIOD)
+    # ATR calculation (period = 10)
+    high = df['High']
+    low = df['Low']
+    close = df['Close']
 
-    df["EMA_FAST"] = ta.ema(df["Close"], length=config.EMA_FAST)
-    df["EMA_SLOW"] = ta.ema(df["Close"], length=config.EMA_SLOW)
+    tr1 = high - low
+    tr2 = abs(high - close.shift())
+    tr3 = abs(low - close.shift())
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr = tr.rolling(10).mean()
 
-    macd = ta.macd(
-        df["Close"],
-        fast=config.MACD_FAST,
-        slow=config.MACD_SLOW,
-        signal=config.MACD_SIGNAL,
-    )
-    if macd is not None:
-        df = df.join(macd)
+    # SuperTrend bands (multiplier = 3)
+    multiplier = 3
+    upper = (high + low) / 2 + multiplier * atr
+    lower = (high + low) / 2 - multiplier * atr
+
+    # Determine trend
+    # First, we need to initialize the trend (1 for uptrend, -1 for downtrend)
+    trend = pd.Series(index=df.index, dtype=int)
+    trend.iloc[0] = 1  # start with uptrend
+
+    for i in range(1, len(df)):
+        if close.iloc[i] > upper.iloc[i-1]:
+            trend.iloc[i] = 1
+        elif close.iloc[i] < lower.iloc[i-1]:
+            trend.iloc[i] = -1
+        else:
+            trend.iloc[i] = trend.iloc[i-1]
+
+    # Final bands adjusted with trend
+    # Upper band when trend is down (1), lower when trend is up (-1)
+    final_upper = pd.Series(index=df.index, dtype=float)
+    final_lower = pd.Series(index=df.index, dtype=float)
+
+    for i in range(len(df)):
+        if trend.iloc[i] == 1:
+            final_upper.iloc[i] = upper.iloc[i]
+            final_lower.iloc[i] = lower.iloc[i]
+        else:
+            final_upper.iloc[i] = upper.iloc[i]
+            final_lower.iloc[i] = lower.iloc[i]
+
+    df['ATR'] = atr
+    df['UPPER'] = final_upper
+    df['LOWER'] = final_lower
+    df['SUPERTREND'] = trend
 
     return df.dropna()
 
 
-def _macd_columns(df: pd.DataFrame):
-    """pandas_ta names MACD columns like MACD_12_26_9 / MACDs_12_26_9."""
-    macd_col = f"MACD_{config.MACD_FAST}_{config.MACD_SLOW}_{config.MACD_SIGNAL}"
-    signal_col = f"MACDs_{config.MACD_FAST}_{config.MACD_SLOW}_{config.MACD_SIGNAL}"
-    return macd_col, signal_col
-
-
 def generate_signal(symbol: str) -> dict:
     """
-    Fetch data, compute indicators, and return a signal dict:
+    Fetch data, compute SuperTrend, and return a signal dict:
         {
             coin, action (BUY/SELL/HOLD), entry_price, target, stop_loss,
             confidence (HIGH/MEDIUM/LOW/NONE), reason, timestamp
@@ -101,71 +133,30 @@ def generate_signal(symbol: str) -> dict:
     latest = df.iloc[-1]
     prev = df.iloc[-2] if len(df) > 1 else latest
 
-    macd_col, signal_col = _macd_columns(df)
-
-    votes = {"BUY": 0, "SELL": 0}
-    reasons = []
-
-    # --- RSI vote ---
-    rsi = latest["RSI"]
-    if rsi < config.RSI_OVERSOLD:
-        votes["BUY"] += 1
-        reasons.append(f"RSI oversold ({rsi:.1f} < {config.RSI_OVERSOLD})")
-    elif rsi > config.RSI_OVERBOUGHT:
-        votes["SELL"] += 1
-        reasons.append(f"RSI overbought ({rsi:.1f} > {config.RSI_OVERBOUGHT})")
-
-    # --- EMA crossover vote ---
-    ema_fast, ema_slow = latest["EMA_FAST"], latest["EMA_SLOW"]
-    prev_fast, prev_slow = prev["EMA_FAST"], prev["EMA_SLOW"]
-    if prev_fast <= prev_slow and ema_fast > ema_slow:
-        votes["BUY"] += 1
-        reasons.append(f"EMA{config.EMA_FAST} crossed above EMA{config.EMA_SLOW} (bullish)")
-    elif prev_fast >= prev_slow and ema_fast < ema_slow:
-        votes["SELL"] += 1
-        reasons.append(f"EMA{config.EMA_FAST} crossed below EMA{config.EMA_SLOW} (bearish)")
-    elif ema_fast > ema_slow:
-        votes["BUY"] += 1
-        reasons.append(f"EMA{config.EMA_FAST} above EMA{config.EMA_SLOW} (uptrend)")
-    elif ema_fast < ema_slow:
-        votes["SELL"] += 1
-        reasons.append(f"EMA{config.EMA_FAST} below EMA{config.EMA_SLOW} (downtrend)")
-
-    # --- MACD crossover vote ---
-    if macd_col in latest and signal_col in latest:
-        macd_val, macd_sig = latest[macd_col], latest[signal_col]
-        prev_macd, prev_sig = prev.get(macd_col), prev.get(signal_col)
-        if prev_macd is not None and prev_sig is not None:
-            if prev_macd <= prev_sig and macd_val > macd_sig:
-                votes["BUY"] += 1
-                reasons.append("MACD crossed above signal line (bullish)")
-            elif prev_macd >= prev_sig and macd_val < macd_sig:
-                votes["SELL"] += 1
-                reasons.append("MACD crossed below signal line (bearish)")
-            elif macd_val > macd_sig:
-                votes["BUY"] += 1
-                reasons.append("MACD above signal line")
-            elif macd_val < macd_sig:
-                votes["SELL"] += 1
-                reasons.append("MACD below signal line")
+    # SuperTrend logic
+    trend = latest['SUPERTREND']
+    prev_trend = prev['SUPERTREND']
 
     action = "HOLD"
     confidence = "NONE"
-    score = 0
+    reason = ""
 
-    if votes["BUY"] > votes["SELL"] and votes["BUY"] >= config.MIN_SCORE_TO_FIRE:
+    if trend == 1 and prev_trend == -1:
         action = "BUY"
-        score = votes["BUY"]
-    elif votes["SELL"] > votes["BUY"] and votes["SELL"] >= config.MIN_SCORE_TO_FIRE:
-        action = "SELL"
-        score = votes["SELL"]
-
-    if score == 3:
         confidence = "HIGH"
-    elif score == 2:
+        reason = f"SuperTrend turned bullish (price {latest['Close']:.2f})"
+    elif trend == -1 and prev_trend == 1:
+        action = "SELL"
+        confidence = "HIGH"
+        reason = f"SuperTrend turned bearish (price {latest['Close']:.2f})"
+    elif trend == 1:
+        action = "BUY"
         confidence = "MEDIUM"
-    elif score == 1:
-        confidence = "LOW"
+        reason = "SuperTrend bullish (holding uptrend)"
+    elif trend == -1:
+        action = "SELL"
+        confidence = "MEDIUM"
+        reason = "SuperTrend bearish (holding downtrend)"
 
     entry_price = float(latest["Close"])
     if action == "BUY":
@@ -185,7 +176,7 @@ def generate_signal(symbol: str) -> dict:
         "target": target,
         "stop_loss": stop_loss,
         "confidence": confidence,
-        "reason": "; ".join(reasons) if reasons else "No indicators triggered",
+        "reason": reason if reason else "No clear signal",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
