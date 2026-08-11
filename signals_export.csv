@@ -1,4 +1,8 @@
 id,timestamp,coin,action,entry_price,target,stop_loss,confidence,reason,status
+34,2026-08-11T06:54:17.004199+00:00,DOGE-USD,BUY,0.06997,0.072069,0.068571,MEDIUM,EMA9 above EMA21 (uptrend); MACD above signal line,pending
+33,2026-08-11T06:54:16.861567+00:00,ADA-USD,SELL,0.1876,0.181972,0.191352,MEDIUM,RSI oversold (26.1 < 30); EMA9 below EMA21 (downtrend); MACD below signal line,pending
+32,2026-08-11T06:54:16.725422+00:00,XRP-USD,SELL,1.0028,0.972716,1.022856,MEDIUM,RSI oversold (26.6 < 30); EMA9 below EMA21 (downtrend); MACD below signal line,pending
+31,2026-08-11T06:54:16.467893+00:00,SOL-USD,SELL,75.620003,73.351403,77.132403,MEDIUM,EMA9 below EMA21 (downtrend); MACD below signal line,pending
 30,2026-08-11T04:14:13.067957+00:00,DOGE-USD,BUY,0.06998,0.072079,0.06858,MEDIUM,EMA9 above EMA21 (uptrend); MACD above signal line,pending
 29,2026-08-11T04:14:12.803946+00:00,ADA-USD,SELL,0.19019,0.184484,0.193994,MEDIUM,EMA9 below EMA21 (downtrend); MACD below signal line,pending
 28,2026-08-11T04:14:12.530157+00:00,XRP-USD,SELL,1.0139,0.983483,1.034178,MEDIUM,EMA9 below EMA21 (downtrend); MACD below signal line,pending
