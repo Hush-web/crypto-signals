@@ -62,23 +62,24 @@ def generate_signal(symbol):
     elif whale_signal == 'BEARISH':
         sell_votes += 2
 
-    # === NEW: Confidence based on vote count ===
-    if buy_votes > sell_votes and buy_votes >= 2:
+    # === THRESHOLD = 3 (more stable, fewer signals) ===
+    # Only trigger when weighted votes >= 3
+    if buy_votes > sell_votes and buy_votes >= 3:
         action = 'BUY'
         if buy_votes >= 5:
-            confidence = 'HIGH'   # Sniper Mode
+            confidence = 'HIGH'   # 🎯 SNIPER MODE
         elif buy_votes >= 3:
-            confidence = 'MEDIUM'  # Laser Locked
+            confidence = 'MEDIUM'  # 📡 LASER LOCKED
         else:
-            confidence = 'LOW'     # Scouting
-    elif sell_votes > buy_votes and sell_votes >= 2:
+            confidence = 'LOW'     # 🔭 SCOUTING
+    elif sell_votes > buy_votes and sell_votes >= 3:
         action = 'SELL'
         if sell_votes >= 5:
-            confidence = 'HIGH'   # Sniper Mode
+            confidence = 'HIGH'   # 🎯 SNIPER MODE
         elif sell_votes >= 3:
-            confidence = 'MEDIUM'  # Laser Locked
+            confidence = 'MEDIUM'  # 📡 LASER LOCKED
         else:
-            confidence = 'LOW'     # Scouting
+            confidence = 'LOW'     # 🔭 SCOUTING
     else:
         action = 'HOLD'
         confidence = 'LOW'
