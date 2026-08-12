@@ -21,8 +21,9 @@ RSI_OVERSOLD = 45
 RSI_OVERBOUGHT = 55
 
 # Risk
-TARGET_PCT = 0.03
-STOP_LOSS_PCT = 0.025
+TARGET_PCT = 0.015     # 1.5% ← easier to hit
+STOP_LOSS_PCT = 0.012  # 1.2% ← tighter loss
+
 
 POSITION_SIZING = {
     'HIGH': 0.04,
