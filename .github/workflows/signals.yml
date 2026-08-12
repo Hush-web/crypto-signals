@@ -3,7 +3,7 @@ name: Auto Crypto Signals
 on:
   schedule:
     - cron: "*/30 * * * *"   # Signals every 30 minutes
-    - cron: "0 8 * * *"      # Daily digest at 8 AM
+    - cron: "0 8 * * *"      # Daily digest at 8 AM UTC (9 AM WAT)
   workflow_dispatch:
 
 jobs:
@@ -20,11 +20,16 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       
-      - name: Run engine
+      - name: Run engine or digest
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python main.py
+        run: |
+          if [ "${{ github.event.schedule }}" = "0 8 * * *" ]; then
+            python main.py --digest
+          else
+            python main.py
+          fi
       
       - name: Commit database
         run: |
