@@ -1,6 +1,7 @@
-# main.py — Full version with live prices, PnL, digest
+# main.py — Complete orchestrator with live prices, PnL tracking, digest, and colorful batch alerts
 import sys
 import sqlite3
+import argparse
 from datetime import datetime, timedelta
 import config
 import database
@@ -8,6 +9,9 @@ import signals as signal_engine
 import telegram
 import yfinance as yf
 from market_data import get_fear_greed, get_whale_sentiment
+
+# Batch counter (increments each run; resets when script restarts)
+BATCH_COUNTER = 1
 
 def get_current_prices():
     """
@@ -61,36 +65,10 @@ def check_open_trades(current_prices):
                 database.close_trade(trade_id, stop, pnl, 'STOP_LOSS')
                 print(f"⛔ {coin} hit STOP LOSS! {pnl:.2f}%")
 
-def run(coins=None, send_alerts=True, export_csv=True):
-    database.init_db()
-    results = signal_engine.generate_all_signals(coins or config.COINS)
-    
-    # Fetch live prices and check open trades
-    prices = get_current_prices()
-    check_open_trades(prices)
-    
-    fired = 0
-    for sig in results:
-        if sig['action'] == 'ERROR':
-            print(f"[main] {sig['coin']}: ERROR — {sig.get('reason', 'Unknown')}")
-            continue
-        if sig['action'] == 'HOLD':
-            print(f"[main] {sig['coin']}: HOLD")
-            continue
-        print(f"[main] {sig['coin']}: {sig['action']} @ {sig['entry_price']} ({sig['confidence']})")
-        database.insert_signal(sig)
-        if send_alerts:
-            telegram.send_signal(sig)
-        fired += 1
-    
-    print(f"[main] Done. {fired} signal(s) fired.")
-    if export_csv:
-        path = database.export_csv()
-        print(f"[main] Exported CSV to {path}")
-
 def send_daily_digest():
+    """Send daily digest with PnL and sentiment."""
     database.init_db()
-    conn = sqlite3.connect('signals.db')
+    conn = sqlite3.connect(config.DB_PATH)
     c = conn.cursor()
     c.execute('SELECT * FROM signals WHERE timestamp > datetime("now", "-24 hours") ORDER BY id DESC LIMIT 10')
     signals = c.fetchall()
@@ -106,8 +84,11 @@ def send_daily_digest():
 
 📈 TODAY'S SIGNALS:
 """
-    for s in signals[:5]:
-        msg += f"  • {s[2]}: {s[3]} @ {s[4]} ({s[7]})\n"
+    if signals:
+        for s in signals[:5]:
+            msg += f"  • {s[2]}: {s[3]} @ {s[4]} ({s[7]})\n"
+    else:
+        msg += "  • No signals recorded in the last 24 hours.\n"
     
     msg += f"""
 📊 30-DAY PERFORMANCE:
@@ -126,15 +107,58 @@ def send_daily_digest():
 ⚠️ Not financial advice. Trade at your own risk.
 """
     telegram.send_digest(msg)
-    
-    # === SEND POLL ===
+    # Send poll
     telegram.send_poll("📊 Community Sentiment: Will BTC be UP or DOWN in 24h?")
 
+def run(coins=None, send_alerts=True, export_csv=True):
+    global BATCH_COUNTER
+    database.init_db()
+    results = signal_engine.generate_all_signals(coins or config.COINS)
+    
+    # Fetch live prices and check open trades
+    prices = get_current_prices()
+    check_open_trades(prices)
+    
+    # Store signals in database and collect active ones for Telegram
+    active_signals = []
+    for sig in results:
+        if sig['action'] == 'ERROR':
+            print(f"[main] {sig['coin']}: ERROR — {sig.get('reason', 'Unknown')}")
+            continue
+        if sig['action'] == 'HOLD':
+            print(f"[main] {sig['coin']}: HOLD")
+            continue
+        print(f"[main] {sig['coin']}: {sig['action']} @ {sig['entry_price']} ({sig['confidence']})")
+        database.insert_signal(sig)
+        active_signals.append(sig)
+    
+    # Send alerts as a colorful batch (if any)
+    if send_alerts and active_signals:
+        telegram.send_batch(active_signals, BATCH_COUNTER)
+        BATCH_COUNTER += 1
+    elif send_alerts and not active_signals:
+        # Optionally send a "no signals" message (could be noisy; we skip it)
+        pass
+    
+    print(f"[main] Done. {len(active_signals)} signal(s) fired.")
+    if export_csv:
+        path = database.export_csv()
+        print(f"[main] Exported CSV to {path}")
+
 def main():
-    if len(sys.argv) > 1 and sys.argv[1] == '--digest':
+    parser = argparse.ArgumentParser(description="Crypto signal generator")
+    parser.add_argument("--digest", action="store_true", help="Send daily digest")
+    parser.add_argument("--coins", nargs="+", help="Override coins list")
+    parser.add_argument("--no-telegram", action="store_true", help="Skip Telegram alerts")
+    parser.add_argument("--no-csv", action="store_true", help="Skip CSV export")
+    args = parser.parse_args()
+    
+    if args.digest:
         send_daily_digest()
         return
-    run()
+    
+    coins = args.coins or config.COINS
+    run(coins=coins, send_alerts=not args.no_telegram, export_csv=not args.no_csv)
 
 if __name__ == '__main__':
     main()
