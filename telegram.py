@@ -1,4 +1,4 @@
-# telegram.py — Colorful, Explanatory, Duplicate-Free
+# telegram.py — with Poll Support
 import requests
 import config
 import json
@@ -25,11 +25,18 @@ def send_telegram(message):
     if not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHAT_ID:
         return
     url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"
-    data = {
-        'chat_id': config.TELEGRAM_CHAT_ID,
-        'text': message,
-        'parse_mode': 'HTML'
-    }
+    data = {'chat_id': config.TELEGRAM_CHAT_ID, 'text': message, 'parse_mode': 'HTML'}
+    try:
+        requests.post(url, data=data, timeout=10)
+    except:
+        pass
+
+def send_poll(question, options=['🟢 UP', '🔴 DOWN']):
+    """Send a poll to Telegram."""
+    if not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHAT_ID:
+        return
+    url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendPoll"
+    data = {'chat_id': config.TELEGRAM_CHAT_ID, 'question': question, 'options': json.dumps(options)}
     try:
         requests.post(url, data=data, timeout=10)
     except:
@@ -89,19 +96,16 @@ def build_colorful_signal(signal, batch_id):
     return msg
 
 def send_signal(signal, batch_id):
-    """Send a single signal with colorful formatting, but only if it's new"""
+    """Send a single signal, only if it's new."""
     if signal['action'] == 'HOLD':
         return False
     
-    # Check for duplicate (same coin, same action, same confidence)
     key = signal['coin']
     if key in last_sent:
         last = last_sent[key]
         if last['action'] == signal['action'] and last['confidence'] == signal['confidence']:
-            # Same as last time – skip
             return False
     
-    # Update last sent
     last_sent[key] = {
         'action': signal['action'],
         'confidence': signal['confidence'],
@@ -113,12 +117,12 @@ def send_signal(signal, batch_id):
     return True
 
 def send_batch(signals, batch_id):
-    """Send a batch of signals, each only if changed"""
-    active = [s for s in signals if s['action'] != 'HOLD' and s['action'] != 'ERROR']
+    """Send a batch of signals, each only if changed."""
+    active = [s for s in signals if s['action'] not in ['HOLD', 'ERROR']]
     if not active:
         return
     
-    # Send header
+    # Batch header
     now = datetime.now().strftime('%H:%M:%S')
     header = f"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -128,7 +132,6 @@ def send_batch(signals, batch_id):
 """
     send_telegram(header)
     
-    # Send each signal
     sent_count = 0
     for sig in active:
         if send_signal(sig, batch_id):
@@ -141,7 +144,6 @@ def send_batch(signals, batch_id):
 def send_digest(digest):
     send_telegram(digest)
 
-# Expose last_sent for potential reset
 def reset_last_sent():
     global last_sent
     last_sent = {}
