@@ -1,49 +1,82 @@
-# main.py — Complete orchestrator with live prices, PnL tracking, digest, and colorful batch alerts
+# main.py — Complete with CoinGecko fallback for new coins
 import sys
 import sqlite3
 import argparse
+import yfinance as yf
+import requests
 from datetime import datetime, timedelta
 import config
 import database
 import signals as signal_engine
 import telegram
-import yfinance as yf
 from market_data import get_fear_greed, get_whale_sentiment
 
-# Batch counter (increments each run; resets when script restarts)
 BATCH_COUNTER = 1
 
 def get_current_prices():
     """
-    Fetch live prices for all tracked coins using yfinance.
-    If yfinance fails, return 0 for that coin so we skip trade checks.
+    Fetch live prices for all tracked coins.
+    Tries yfinance first, then falls back to CoinGecko.
     """
     prices = {}
+    coin_ids = {
+        'BTC-USD': 'bitcoin',
+        'ETH-USD': 'ethereum',
+        'SOL-USD': 'solana',
+        'AVAX-USD': 'avalanche-2',
+        'LINK-USD': 'chainlink',
+        'MATIC-USD': 'matic-network',
+        'NEAR-USD': 'near',
+        'OP-USD': 'optimism'
+    }
+    
     for coin in config.COINS:
+        price = 0
+        # Try yfinance
         try:
             ticker = yf.Ticker(coin)
             data = ticker.history(period="1d", interval="1m")
             if not data.empty:
-                prices[coin] = data['Close'].iloc[-1]
-            else:
-                prices[coin] = 0
-                print(f"⚠️ No live data for {coin}, skipping trade checks.")
+                price = data['Close'].iloc[-1]
+                print(f"✅ Live price for {coin}: ${price:.2f} (yfinance)")
+                prices[coin] = price
+                continue
         except Exception as e:
-            print(f"❌ Price fetch failed for {coin}: {e}")
-            prices[coin] = 0
+            print(f"⚠️ yfinance failed for {coin}: {e}")
+        
+        # If yfinance fails, try CoinGecko
+        try:
+            coin_id = coin_ids.get(coin, 'bitcoin')
+            url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd"
+            resp = requests.get(url, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                price = data.get(coin_id, {}).get('usd', 0)
+                if price:
+                    print(f"✅ Live price for {coin}: ${price:.2f} (CoinGecko)")
+                    prices[coin] = price
+                    continue
+        except Exception as e:
+            print(f"⚠️ CoinGecko failed for {coin}: {e}")
+        
+        prices[coin] = 0
+        print(f"❌ No live data for {coin}")
+    
+    print(f"[DEBUG] get_current_prices returned: {prices}")
     return prices
 
 def check_open_trades(current_prices):
-    """
-    Check all open trades against current prices.
-    If price is 0 (fetch failed), skip that coin.
-    """
     open_trades = database.get_open_trades()
+    print(f"[DEBUG] Found {len(open_trades)} open trades to check.")
+    
     for trade in open_trades:
         trade_id, coin, action, entry, target, stop = trade
         price = current_prices.get(coin)
         if not price or price == 0:
+            print(f"⚠️ Skipping {coin} (no live price)")
             continue
+        
+        print(f"[DEBUG] Checking {coin} {action}: entry={entry:.2f}, target={target:.2f}, stop={stop:.2f}, current={price:.2f}")
         
         if action == 'BUY':
             if price >= target:
@@ -54,7 +87,6 @@ def check_open_trades(current_prices):
                 pnl = (stop - entry) / entry * 100
                 database.close_trade(trade_id, stop, pnl, 'STOP_LOSS')
                 print(f"⛔ {coin} hit STOP LOSS! {pnl:.2f}%")
-        
         elif action == 'SELL':
             if price <= target:
                 pnl = (entry - target) / entry * 100
@@ -66,7 +98,6 @@ def check_open_trades(current_prices):
                 print(f"⛔ {coin} hit STOP LOSS! {pnl:.2f}%")
 
 def send_daily_digest():
-    """Send daily digest with PnL and sentiment."""
     database.init_db()
     conn = sqlite3.connect(config.DB_PATH)
     c = conn.cursor()
@@ -75,7 +106,6 @@ def send_daily_digest():
     conn.close()
     
     pnl = database.get_pnl_metrics(30)
-    
     fear_val, fear_label = get_fear_greed()
     whale_signal, whale_reason = get_whale_sentiment()
     
@@ -107,19 +137,18 @@ def send_daily_digest():
 ⚠️ Not financial advice. Trade at your own risk.
 """
     telegram.send_digest(msg)
-    # Send poll
     telegram.send_poll("📊 Community Sentiment: Will BTC be UP or DOWN in 24h?")
 
-def run(coins=None, send_alerts=True, export_csv=True):
+def run(pairs=None, send_alerts=True, export_csv=True):
     global BATCH_COUNTER
     database.init_db()
-    results = signal_engine.generate_all_signals(coins or config.COINS)
     
-    # Fetch live prices and check open trades
+    results = signal_engine.generate_all_signals(pairs or config.COINS)
+    
+    print("\n[DEBUG] Checking open trades with live prices...")
     prices = get_current_prices()
     check_open_trades(prices)
     
-    # Store signals in database and collect active ones for Telegram
     active_signals = []
     for sig in results:
         if sig['action'] == 'ERROR':
@@ -128,17 +157,13 @@ def run(coins=None, send_alerts=True, export_csv=True):
         if sig['action'] == 'HOLD':
             print(f"[main] {sig['coin']}: HOLD")
             continue
-        print(f"[main] {sig['coin']}: {sig['action']} @ {sig['entry_price']} ({sig['confidence']})")
+        print(f"[main] {sig['coin']}: {sig['action']} @ {sig['entry_price']:.2f} ({sig['confidence']})")
         database.insert_signal(sig)
         active_signals.append(sig)
     
-    # Send alerts as a colorful batch (if any)
     if send_alerts and active_signals:
         telegram.send_batch(active_signals, BATCH_COUNTER)
         BATCH_COUNTER += 1
-    elif send_alerts and not active_signals:
-        # Optionally send a "no signals" message (could be noisy; we skip it)
-        pass
     
     print(f"[main] Done. {len(active_signals)} signal(s) fired.")
     if export_csv:
@@ -148,7 +173,7 @@ def run(coins=None, send_alerts=True, export_csv=True):
 def main():
     parser = argparse.ArgumentParser(description="Crypto signal generator")
     parser.add_argument("--digest", action="store_true", help="Send daily digest")
-    parser.add_argument("--coins", nargs="+", help="Override coins list")
+    parser.add_argument("--pairs", nargs="+", help="Override pairs list")
     parser.add_argument("--no-telegram", action="store_true", help="Skip Telegram alerts")
     parser.add_argument("--no-csv", action="store_true", help="Skip CSV export")
     args = parser.parse_args()
@@ -157,8 +182,8 @@ def main():
         send_daily_digest()
         return
     
-    coins = args.coins or config.COINS
-    run(coins=coins, send_alerts=not args.no_telegram, export_csv=not args.no_csv)
+    pairs = args.pairs or config.COINS
+    run(pairs=pairs, send_alerts=not args.no_telegram, export_csv=not args.no_csv)
 
 if __name__ == '__main__':
     main()
