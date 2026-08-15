@@ -121,7 +121,6 @@ COINS = [
     'LINK-USD',
     'MATIC-USD',
     'NEAR-USD',
-    'OP-USD',
     'ARB-USD',
     'ATOM-USD',
     'DOT-USD',
