@@ -73,9 +73,12 @@ def send_daily_digest():
     c.execute('SELECT * FROM signals WHERE timestamp > datetime("now", "-24 hours") ORDER BY id DESC LIMIT 10')
     signals = c.fetchall()
     conn.close()
+    
     pnl = database.get_pnl_metrics(30)
+    paper_stats = paper_trading.get_performance_summary()
     fear_val, fear_label = get_fear_greed()
     whale_signal, whale_reason = get_whale_sentiment()
+    
     msg = f"""
 📊 DAILY CRYPTO DIGEST — {datetime.now().strftime('%B %d, %Y')}
 
@@ -86,18 +89,26 @@ def send_daily_digest():
             msg += f"  • {s[2]}: {s[3]} @ {s[4]} ({s[7]})\n"
     else:
         msg += "  • No signals recorded in the last 24 hours.\n"
+    
     msg += f"""
-📊 30-DAY PERFORMANCE:
+📊 30-DAY REAL TRADING PERFORMANCE:
   Total Trades: {pnl['total_trades']}
   Wins: {pnl['wins']} | Losses: {pnl['losses']}
   Win Rate: {pnl['win_rate']:.1f}%
   Total PnL: {pnl['total_pnl']:.2f}%
-  Avg Win: {pnl['avg_win']:.2f}% | Avg Loss: {pnl['avg_loss']:.2f}%
+
+📊 PAPER TRADING PERFORMANCE (Virtual):
+  Balance: ${paper_stats['balance']:.2f}
+  Total Return: {paper_stats['return_pct']:+.2f}%
+  Win Rate: {paper_stats['win_rate']:.1f}%
+  Open Trades: {paper_stats['open']} | Closed: {paper_stats['closed']}
+  Total PnL: ${paper_stats['total_pnl']:+.2f}
 
 📊 SENTIMENT:
   Fear & Greed: {fear_label} ({fear_val})
   Whale: {whale_signal} — {whale_reason}
-⚠️ Not financial advice.
+
+⚠️ Not financial advice. Trade at your own risk.
 """
     telegram.send_digest(msg)
     telegram.send_poll("📊 Community Sentiment: Will BTC be UP or DOWN in 24h?")
@@ -120,7 +131,14 @@ def run(pairs=None, send_alerts=True, export_csv=True):
             continue
         print(f"[main] {sig['coin']}: {sig['action']} @ {sig['entry_price']:.2f}")
         signal_id = database.insert_signal(sig)
-        paper_trading.open_paper_trade(signal_id, sig['coin'], sig['action'], sig['entry_price'], sig['target'], sig['stop_loss'])
+        paper_trading.open_paper_trade(
+            signal_id,
+            sig['coin'],
+            sig['action'],
+            sig['entry_price'],
+            sig['target'],
+            sig['stop_loss']
+        )
         active_signals.append(sig)
     if send_alerts and active_signals:
         telegram.send_batch(active_signals, BATCH_COUNTER)
