@@ -1,16 +1,9 @@
-# paper_trading.py — Realistic Paper Trading Simulator
+# paper_trading.py — Paper Trading Simulator
 import sqlite3
 import config
-import random
 from datetime import datetime
 
-# === REALISTIC SETTINGS ===
-TRADING_FEE_PCT = 0.001      # 0.1% per trade (Binance spot)
-SLIPPAGE_PCT = 0.001         # 0.1% slippage
-EXECUTION_DELAY_PCT = 0.0005 # 0.05% random delay
-
 def init_paper_account():
-    """Initialize paper trading account with realistic settings."""
     conn = sqlite3.connect(config.DB_PATH)
     c = conn.cursor()
     c.execute('''
@@ -26,7 +19,6 @@ def init_paper_account():
             exit_price REAL DEFAULT 0,
             pnl_pct REAL DEFAULT 0,
             pnl_usd REAL DEFAULT 0,
-            fees REAL DEFAULT 0,
             status TEXT DEFAULT 'OPEN',
             entry_time DATETIME,
             exit_time DATETIME,
@@ -46,7 +38,7 @@ def init_paper_account():
         c.execute('INSERT INTO paper_account (balance, equity, updated_at) VALUES (10000, 10000, ?)', (datetime.now().isoformat(),))
     conn.commit()
     conn.close()
-    print("[Paper] Account initialized with $10,000 (fees & slippage simulated)")
+    print("[Paper] Account initialized with $10,000 virtual balance")
 
 def get_balance():
     conn = sqlite3.connect(config.DB_PATH)
@@ -63,7 +55,8 @@ def update_balance(new_balance):
     conn.commit()
     conn.close()
 
-def calculate_position_size(balance, entry_price, stop_loss, risk_percent=0.02):
+def calculate_position_size(balance, entry_price, stop_loss, risk_percent=0.03):
+    """3% risk per trade — AGGRESSIVE"""
     risk_amount = balance * risk_percent
     stop_loss_pct = abs((stop_loss - entry_price) / entry_price) if entry_price != 0 else 0.01
     if stop_loss_pct == 0:
@@ -73,30 +66,13 @@ def calculate_position_size(balance, entry_price, stop_loss, risk_percent=0.02):
 
 def open_paper_trade(signal_id, coin, action, entry, target, stop):
     balance = get_balance()
-    
-    # Slippage on entry
-    slippage_shift = random.uniform(-SLIPPAGE_PCT, SLIPPAGE_PCT)
-    adjusted_entry = entry * (1 + slippage_shift)
-    if action == 'BUY':
-        adjusted_entry = max(adjusted_entry, entry * 0.995)
-    else:
-        adjusted_entry = min(adjusted_entry, entry * 1.005)
-    
-    # Execution delay
-    delay_shift = random.uniform(-EXECUTION_DELAY_PCT, EXECUTION_DELAY_PCT)
-    final_entry = adjusted_entry * (1 + delay_shift)
-    
-    position_size = calculate_position_size(balance, final_entry, stop)
-    
+    position_size = calculate_position_size(balance, entry, stop)
     conn = sqlite3.connect(config.DB_PATH)
     c = conn.cursor()
-    c.execute('''
-        INSERT INTO paper_trades (signal_id, coin, action, entry_price, target, stop_loss, position_size, entry_time)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (signal_id, coin, action, final_entry, target, stop, position_size, datetime.now().isoformat()))
+    c.execute('INSERT INTO paper_trades (signal_id, coin, action, entry_price, target, stop_loss, position_size, entry_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', (signal_id, coin, action, entry, target, stop, position_size, datetime.now().isoformat()))
     conn.commit()
     conn.close()
-    print(f"[Paper] {action} {coin} @ ${final_entry:.2f} (size: {position_size:.4f})")
+    print(f"[Paper] {action} {coin} opened @ ${entry:.2f} (size: {position_size:.4f} units)")
 
 def close_paper_trade(trade_id, exit_price, reason):
     conn = sqlite3.connect(config.DB_PATH)
@@ -107,36 +83,20 @@ def close_paper_trade(trade_id, exit_price, reason):
         conn.close()
         return
     coin, action, entry, position_size = row
-    
-    # Slippage on exit
-    slippage_shift = random.uniform(-SLIPPAGE_PCT, SLIPPAGE_PCT)
-    exit_price_adj = exit_price * (1 + slippage_shift)
-    
-    # Gross PnL
     if action == 'BUY':
-        gross_pnl = (exit_price_adj - entry) * position_size
+        pnl_usd = (exit_price - entry) * position_size
+        pnl_pct = (exit_price - entry) / entry * 100
     else:
-        gross_pnl = (entry - exit_price_adj) * position_size
-    
-    # Trading fees
-    fee = abs(gross_pnl) * TRADING_FEE_PCT
-    pnl_usd = gross_pnl - fee
-    pnl_pct = (pnl_usd / (entry * position_size)) * 100 if (entry * position_size) != 0 else 0
-    
-    c.execute('''
-        UPDATE paper_trades 
-        SET exit_price = ?, pnl_pct = ?, pnl_usd = ?, fees = ?, status = 'CLOSED', exit_time = ?
-        WHERE id = ?
-    ''', (exit_price_adj, pnl_pct, pnl_usd, fee, datetime.now().isoformat(), trade_id))
+        pnl_usd = (entry - exit_price) * position_size
+        pnl_pct = (entry - exit_price) / entry * 100
+    c.execute('UPDATE paper_trades SET exit_price = ?, pnl_pct = ?, pnl_usd = ?, status = "CLOSED", exit_time = ? WHERE id = ?', (exit_price, pnl_pct, pnl_usd, datetime.now().isoformat(), trade_id))
     conn.commit()
     conn.close()
-    
     balance = get_balance()
     new_balance = balance + pnl_usd
     update_balance(new_balance)
-    
     emoji = "✅" if pnl_usd > 0 else "❌"
-    print(f"[Paper] {emoji} {coin} closed: ${pnl_usd:+.2f} ({pnl_pct:+.2f}%) | Fee: ${fee:.2f} | Balance: ${new_balance:.2f}")
+    print(f"[Paper] {emoji} {coin} closed: ${pnl_usd:+.2f} ({pnl_pct:+.2f}%) | Balance: ${new_balance:.2f}")
 
 def get_open_paper_trades():
     conn = sqlite3.connect(config.DB_PATH)
@@ -159,8 +119,6 @@ def get_performance_summary():
     losses = c.fetchone()[0]
     c.execute('SELECT SUM(pnl_usd) FROM paper_trades WHERE status = "CLOSED"')
     total_pnl = c.fetchone()[0] or 0
-    c.execute('SELECT SUM(fees) FROM paper_trades WHERE status = "CLOSED"')
-    total_fees = c.fetchone()[0] or 0
     win_rate = (wins / closed * 100) if closed > 0 else 0
     balance = get_balance()
     conn.close()
@@ -172,7 +130,6 @@ def get_performance_summary():
         'losses': losses,
         'win_rate': win_rate,
         'total_pnl': total_pnl,
-        'total_fees': total_fees,
         'balance': balance,
         'initial_balance': 10000,
         'return_pct': ((balance - 10000) / 10000) * 100
@@ -181,13 +138,12 @@ def get_performance_summary():
 def print_performance_report():
     stats = get_performance_summary()
     print("\n" + "=" * 60)
-    print("📊 PAPER TRADING PERFORMANCE")
+    print("📊 PAPER TRADING PERFORMANCE — AGGRESSIVE")
     print("=" * 60)
     print(f"  Initial Balance:  $10,000.00")
     print(f"  Current Balance:  ${stats['balance']:.2f}")
     print(f"  Total Return:     {stats['return_pct']:+.2f}%")
     print(f"  Total PnL:        ${stats['total_pnl']:+.2f}")
-    print(f"  Total Fees Paid:  ${stats['total_fees']:.2f}")
     print("-" * 60)
     print(f"  Total Trades:     {stats['total']}")
     print(f"  Open:             {stats['open']}")
