@@ -28,13 +28,14 @@ jobs:
             python main.py
           fi
      - name: Commit database
+  - name: Commit database
   run: |
     git config --global user.name 'github-actions[bot]'
     git config --global user.email 'github-actions[bot]@users.noreply.github.com'
     git pull origin main --rebase
     git add signals.db
     git diff --staged --quiet || git commit -m "Update DB [skip ci]"
-    git push origin main --force
+    git push origin main
   continue-on-error: true
       - name: Upload CSV
         uses: actions/upload-artifact@v4
