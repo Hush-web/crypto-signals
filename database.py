@@ -38,29 +38,21 @@ def init_db():
     print("[DB] Schema ready")
 
 def insert_signal(signal):
-    """Insert a new signal with status 'OPEN'"""
+    """Insert a new signal and return its ID."""
     conn = sqlite3.connect(config.DB_PATH)
     c = conn.cursor()
     c.execute('''
-        INSERT INTO signals 
-        (timestamp, coin, action, entry_price, target, stop_loss, confidence, reason, status)
+        INSERT INTO signals (timestamp, coin, action, entry_price, target, stop_loss, confidence, reason, status)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
-        signal['timestamp'], 
-        signal['coin'], 
-        signal['action'],
-        signal['entry_price'], 
-        signal['target'], 
-        signal['stop_loss'],
-        signal['confidence'], 
-        signal['reason'], 
-        'OPEN'  # <--- Explicitly set to OPEN
-    ))
+    ''', (signal['timestamp'], signal['coin'], signal['action'],
+          signal['entry_price'], signal['target'], signal['stop_loss'],
+          signal['confidence'], signal['reason'], 'OPEN'))
+    signal_id = c.lastrowid
     conn.commit()
     conn.close()
+    return signal_id
 
 def get_open_trades():
-    """Get all trades with status 'OPEN'"""
     conn = sqlite3.connect(config.DB_PATH)
     c = conn.cursor()
     c.execute('SELECT id, coin, action, entry_price, target, stop_loss FROM signals WHERE status = "OPEN"')
@@ -69,7 +61,6 @@ def get_open_trades():
     return rows
 
 def close_trade(trade_id, exit_price, pnl_pct, reason):
-    """Close a trade and record PnL"""
     conn = sqlite3.connect(config.DB_PATH)
     c = conn.cursor()
     c.execute('''
