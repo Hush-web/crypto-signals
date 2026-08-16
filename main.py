@@ -1,4 +1,4 @@
-# main.py — Complete orchestrator with paper trading (AGGRESSIVE)
+# main.py — with full debug check_paper_trades
 import sys
 import sqlite3
 import argparse
@@ -52,30 +52,6 @@ def get_current_prices():
         prices[coin] = 0
     return prices
 
-def check_paper_trades(current_prices):
-    open_paper_trades = paper_trading.get_open_paper_trades()
-    print(f"[DEBUG] Checking {len(open_paper_trades)} open trades...")
-    for trade in open_paper_trades:
-        trade_id, coin, action, entry, target, stop = trade
-        price = current_prices.get(coin, 0)
-        if price == 0:
-            print(f"[DEBUG] {coin} price is 0, skipping")
-            continue
-        if action == 'BUY':
-            if price >= target:
-                paper_trading.close_paper_trade(trade_id, target, 'TARGET')
-                print(f"[DEBUG] {coin} BUY hit TARGET")
-            elif price <= stop:
-                paper_trading.close_paper_trade(trade_id, stop, 'STOP_LOSS')
-                print(f"[DEBUG] {coin} BUY hit STOP_LOSS")
-        elif action == 'SELL':
-            if price <= target:
-                paper_trading.close_paper_trade(trade_id, target, 'TARGET')
-                print(f"[DEBUG] {coin} SELL hit TARGET")
-            elif price >= stop:
-                paper_trading.close_paper_trade(trade_id, stop, 'STOP_LOSS')
-                print(f"[DEBUG] {coin} SELL hit STOP_LOSS")
-
 def send_daily_digest():
     database.init_db()
     conn = sqlite3.connect(config.DB_PATH)
@@ -124,8 +100,8 @@ def run(pairs=None, send_alerts=True, export_csv=True):
     prices = get_current_prices()
     
     # ===== STEP 2: CLOSE EXISTING OPEN TRADES =====
-    print("\n[DEBUG] Checking open paper trades with live prices...")
-    check_paper_trades(prices)
+    print("\n[DEBUG] ==== First pass: checking existing open trades ====")
+    paper_trading.check_paper_trades(prices)
     
     # ===== STEP 3: GENERATE NEW SIGNALS =====
     results = signal_engine.generate_all_signals(pairs or config.COINS)
@@ -145,11 +121,10 @@ def run(pairs=None, send_alerts=True, export_csv=True):
         active_signals.append(sig)
     
     # ===== STEP 5: CHECK AGAIN IMMEDIATELY =====
-    # Some new trades might already hit target due to price movement
     if active_signals:
-        print("\n[DEBUG] Re-checking open trades after opening new positions...")
+        print("\n[DEBUG] ==== Second pass: re-checking after opening new trades ====")
         prices = get_current_prices()  # Refresh prices
-        check_paper_trades(prices)
+        paper_trading.check_paper_trades(prices)
     
     if send_alerts and active_signals:
         telegram.send_batch(active_signals, BATCH_COUNTER)

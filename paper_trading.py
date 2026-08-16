@@ -106,13 +106,8 @@ def get_open_paper_trades():
     return rows
 
 def check_paper_trades(current_prices):
-    """
-    Check all open paper trades against current prices.
-    Closes trades that hit target or stop-loss.
-    """
     open_trades = get_open_paper_trades()
-    print(f"[DEBUG] check_paper_trades() called. Found {len(open_trades)} open trades.")
-
+    print(f"\n[DEBUG] === check_paper_trades() called. Found {len(open_trades)} open trades. ===")
     if not open_trades:
         print("[DEBUG] No open trades to check.")
         return
@@ -120,7 +115,8 @@ def check_paper_trades(current_prices):
     for trade in open_trades:
         trade_id, coin, action, entry, target, stop = trade
         price = current_prices.get(coin, 0)
-        print(f"[DEBUG] Trade {trade_id}: {coin} {action} entry={entry:.4f} target={target:.4f} stop={stop:.4f} price={price:.4f}")
+        # Print every trade with its key numbers
+        print(f"[DEBUG] Trade {trade_id}: {coin} {action} | entry={entry:.4f} target={target:.4f} stop={stop:.4f} | current price={price:.4f}")
 
         if price == 0:
             print(f"[DEBUG] {coin} price is 0, skipping")
@@ -143,7 +139,7 @@ def check_paper_trades(current_prices):
         else:
             print(f"[DEBUG] Unknown action: {action}")
 
-    print("[DEBUG] check_paper_trades() finished.")
+    print("[DEBUG] === check_paper_trades() finished. ===\n")
 
 def get_performance_summary():
     conn = sqlite3.connect(config.DB_PATH)
