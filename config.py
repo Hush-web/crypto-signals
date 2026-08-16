@@ -5,6 +5,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ============================================
+# MODE SELECTION (ADD THIS)  ← NEW
+# ============================================
+SIMULATION_MODE = False   # False = live data, True = mock data
+PAPER_TRADE = True        # True = paper trading, False = real execution
+
+# ============================================
 # TELEGRAM
 # ============================================
 
