@@ -1,4 +1,4 @@
-# paper_trading.py — Paper Trading Simulator
+# paper_trading.py — Paper Trading Simulator with full debug
 import sqlite3
 import config
 from datetime import datetime
@@ -56,7 +56,6 @@ def update_balance(new_balance):
     conn.close()
 
 def calculate_position_size(balance, entry_price, stop_loss, risk_percent=0.03):
-    """3% risk per trade — AGGRESSIVE"""
     risk_amount = balance * risk_percent
     stop_loss_pct = abs((stop_loss - entry_price) / entry_price) if entry_price != 0 else 0.01
     if stop_loss_pct == 0:
@@ -112,28 +111,39 @@ def check_paper_trades(current_prices):
     Closes trades that hit target or stop-loss.
     """
     open_trades = get_open_paper_trades()
-    print(f"[DEBUG] Checking {len(open_trades)} open trades...")
+    print(f"[DEBUG] check_paper_trades() called. Found {len(open_trades)} open trades.")
+
+    if not open_trades:
+        print("[DEBUG] No open trades to check.")
+        return
+
     for trade in open_trades:
         trade_id, coin, action, entry, target, stop = trade
         price = current_prices.get(coin, 0)
-        # Skip if price is 0 (data missing) – log it
+        print(f"[DEBUG] Trade {trade_id}: {coin} {action} entry={entry:.4f} target={target:.4f} stop={stop:.4f} price={price:.4f}")
+
         if price == 0:
             print(f"[DEBUG] {coin} price is 0, skipping")
             continue
+
         if action == 'BUY':
             if price >= target:
                 close_paper_trade(trade_id, target, 'TARGET')
-                print(f"[DEBUG] {coin} hit TARGET at {price:.4f}")
+                print(f"[DEBUG] {coin} BUY hit TARGET!")
             elif price <= stop:
                 close_paper_trade(trade_id, stop, 'STOP_LOSS')
-                print(f"[DEBUG] {coin} hit STOP_LOSS at {price:.4f}")
+                print(f"[DEBUG] {coin} BUY hit STOP_LOSS!")
         elif action == 'SELL':
             if price <= target:
                 close_paper_trade(trade_id, target, 'TARGET')
-                print(f"[DEBUG] {coin} hit TARGET at {price:.4f}")
+                print(f"[DEBUG] {coin} SELL hit TARGET!")
             elif price >= stop:
                 close_paper_trade(trade_id, stop, 'STOP_LOSS')
-                print(f"[DEBUG] {coin} hit STOP_LOSS at {price:.4f}")
+                print(f"[DEBUG] {coin} SELL hit STOP_LOSS!")
+        else:
+            print(f"[DEBUG] Unknown action: {action}")
+
+    print("[DEBUG] check_paper_trades() finished.")
 
 def get_performance_summary():
     conn = sqlite3.connect(config.DB_PATH)
