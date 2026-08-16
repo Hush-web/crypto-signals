@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # Fetch full history to allow commits
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -26,15 +28,16 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py
 
-      - name: Commit database (FIXED)
+      - name: Commit database
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          git fetch origin main
-          git reset --hard origin/main
-          git add signals.db
+          # Force-add the database, even if it's ignored
+          git add -f signals.db
+          # Only commit if there are changes
           git diff --staged --quiet || git commit -m "Update DB [skip ci]"
-          git push origin main --force
+          # Push without --force to avoid overwriting other changes
+          git push origin main
         continue-on-error: true
 
       - name: Upload CSV
