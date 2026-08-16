@@ -112,30 +112,12 @@ TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 # ============================================
 # COINS — Expanded to 20 for more signals
 # ============================================
-
 COINS = [
-    # Large Caps (Stable)
-    'BTC-USD',
-    'ETH-USD',
-    'SOL-USD',
-    'BNB-USD',
-    'XRP-USD',
-    'ADA-USD',
-    
-    # Mid Caps (Volatile)
-    'AVAX-USD',
-    'LINK-USD',
-    'MATIC-USD',
-    'NEAR-USD',
-    'ATOM-USD',
-    'DOT-USD',
-    'APT-USD',
-    'SUI-USD',
-    'SEI-USD',
-    'INJ-USD',
-    'MNT-USD',
-    'TIA-USD',
+    'BTC-USD', 'ETH-USD', 'SOL-USD', 'BNB-USD', 'XRP-USD', 'ADA-USD',
+    'AVAX-USD', 'LINK-USD', 'NEAR-USD', 'ATOM-USD', 'DOT-USD',
+    'SEI-USD', 'INJ-USD', 'MNT-USD', 'TIA-USD'
 ]
+
 
 # ============================================
 # DATA

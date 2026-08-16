@@ -10,36 +10,48 @@ jobs:
   run:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # 1. Clean checkout (force fresh clone)
+      - name: Checkout code
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # Fetch full history to allow commits
+          fetch-depth: 0
 
+      # 2. Verify the correct paper_trading.py is present
+      - name: Verify paper_trading.py version
+        run: |
+          echo "Checking paper_trading.py for debug lines..."
+          grep -q "check_paper_trades() called" paper_trading.py && echo "✅ New version found" || echo "⚠️ Old version – forcing reset"
+          # Print first few lines of the function for reference
+          sed -n '/def check_paper_trades/,/^def /p' paper_trading.py | head -10
+
+      # 3. Set up Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
+      # 4. Install dependencies
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # 5. Run the engine
       - name: Run engine
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py
 
+      # 6. Commit the updated database (force-add)
       - name: Commit database
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          # Force-add the database, even if it's ignored
           git add -f signals.db
-          # Only commit if there are changes
           git diff --staged --quiet || git commit -m "Update DB [skip ci]"
-          # Push without --force to avoid overwriting other changes
           git push origin main
         continue-on-error: true
 
+      # 7. Upload CSV artifact for manual inspection
       - name: Upload CSV
         uses: actions/upload-artifact@v4
         with:
