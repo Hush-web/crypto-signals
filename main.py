@@ -1,9 +1,10 @@
-# main.py — with full debug check_paper_trades
+# main.py — with continuous monitoring for 24/7 deployment
 import sys
 import sqlite3
 import argparse
 import yfinance as yf
 import requests
+import time
 from datetime import datetime, timedelta
 import config
 import database
@@ -31,7 +32,6 @@ def get_current_prices():
             data = ticker.history(period="1d", interval="1m")
             if not data.empty:
                 price = data['Close'].iloc[-1]
-                print(f"✅ Live price for {coin}: ${price:.2f}")
                 prices[coin] = price
                 continue
         except:
@@ -44,7 +44,6 @@ def get_current_prices():
                 data = resp.json()
                 price = data.get(coin_id, {}).get('usd', 0)
                 if price:
-                    print(f"✅ Live price for {coin}: ${price:.2f} (CoinGecko)")
                     prices[coin] = price
                     continue
         except:
@@ -89,24 +88,98 @@ def send_daily_digest():
 ⚠️ Not financial advice. Trade at your own risk.
 """
     telegram.send_digest(msg)
-    telegram.send_poll("📊 Community Sentiment: Will BTC be UP or DOWN in 24h?")
 
-def run(pairs=None, send_alerts=True, export_csv=True):
-    global BATCH_COUNTER
+def generate_and_open_trades():
+    """Generate signals and open new paper trades"""
+    results = signal_engine.generate_all_signals(config.COINS)
+    active_signals = []
+    for sig in results:
+        if sig['action'] == 'ERROR':
+            print(f"[main] {sig['coin']}: ERROR")
+            continue
+        if sig['action'] == 'HOLD':
+            continue
+        print(f"[main] {sig['coin']}: {sig['action']} @ {sig['entry_price']:.2f}")
+        signal_id = database.insert_signal(sig)
+        paper_trading.open_paper_trade(signal_id, sig['coin'], sig['action'], sig['entry_price'], sig['target'], sig['stop_loss'])
+        active_signals.append(sig)
+    return active_signals
+
+def run_continuous():
+    """Run the bot continuously – checks prices every 5 seconds"""
+    print("🔴 Starting continuous monitoring mode (24/7)...")
     database.init_db()
     paper_trading.init_paper_account()
     
-    # ===== STEP 1: FETCH LIVE PRICES =====
-    prices = get_current_prices()
+    loop_count = 0
+    while True:
+        try:
+            # Fetch live prices
+            prices = get_current_prices()
+            
+            # Check and close any trades that hit TP/SL
+            paper_trading.check_paper_trades(prices)
+            
+            # Every 60 loops (~5 minutes), print a heartbeat
+            if loop_count % 60 == 0:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Heartbeat – monitoring...")
+            
+            loop_count += 1
+            time.sleep(5)  # Check every 5 seconds
+            
+        except KeyboardInterrupt:
+            print("\n🔴 Shutting down...")
+            break
+        except Exception as e:
+            print(f"❌ Error: {e}")
+            time.sleep(10)
+
+def run_continuous_with_signals():
+    """Run continuously with signal generation every hour"""
+    print("🔴 Starting continuous monitoring with periodic signal generation...")
+    database.init_db()
+    paper_trading.init_paper_account()
     
-    # ===== STEP 2: CLOSE EXISTING OPEN TRADES =====
-    print("\n[DEBUG] ==== First pass: checking existing open trades ====")
+    last_signal_time = time.time()
+    signal_interval = 3600  # Generate new signals every hour
+    loop_count = 0
+    
+    while True:
+        try:
+            # Fetch live prices
+            prices = get_current_prices()
+            
+            # 1. Check and close trades
+            paper_trading.check_paper_trades(prices)
+            
+            # 2. Generate new signals periodically
+            if time.time() - last_signal_time > signal_interval:
+                print(f"\n[main] Generating new signals at {datetime.now().strftime('%H:%M:%S')}")
+                generate_and_open_trades()
+                last_signal_time = time.time()
+            
+            if loop_count % 60 == 0:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Heartbeat – monitoring...")
+            
+            loop_count += 1
+            time.sleep(5)
+            
+        except KeyboardInterrupt:
+            print("\n🔴 Shutting down...")
+            break
+        except Exception as e:
+            print(f"❌ Error: {e}")
+            time.sleep(10)
+
+def run():
+    """Original run mode – single pass for cron jobs"""
+    database.init_db()
+    paper_trading.init_paper_account()
+    
+    prices = get_current_prices()
     paper_trading.check_paper_trades(prices)
     
-    # ===== STEP 3: GENERATE NEW SIGNALS =====
-    results = signal_engine.generate_all_signals(pairs or config.COINS)
-    
-    # ===== STEP 4: OPEN NEW PAPER TRADES =====
+    results = signal_engine.generate_all_signals(config.COINS)
     active_signals = []
     for sig in results:
         if sig['action'] == 'ERROR':
@@ -115,33 +188,30 @@ def run(pairs=None, send_alerts=True, export_csv=True):
         if sig['action'] == 'HOLD':
             print(f"[main] {sig['coin']}: HOLD")
             continue
-        print(f"[main] {sig['coin']}: {sig['action']} @ {sig['entry_price']:.2f} ({sig['confidence']})")
+        print(f"[main] {sig['coin']}: {sig['action']} @ {sig['entry_price']:.2f}")
         signal_id = database.insert_signal(sig)
         paper_trading.open_paper_trade(signal_id, sig['coin'], sig['action'], sig['entry_price'], sig['target'], sig['stop_loss'])
         active_signals.append(sig)
     
-    # ===== STEP 5: CHECK AGAIN IMMEDIATELY =====
-    if active_signals:
-        print("\n[DEBUG] ==== Second pass: re-checking after opening new trades ====")
-        prices = get_current_prices()  # Refresh prices
-        paper_trading.check_paper_trades(prices)
-    
-    if send_alerts and active_signals:
-        telegram.send_batch(active_signals, BATCH_COUNTER)
-        BATCH_COUNTER += 1
-    
     print(f"[main] Done. {len(active_signals)} signal(s) fired.")
     paper_trading.print_performance_report()
-    if export_csv:
-        path = database.export_csv()
-        print(f"[main] Exported CSV to {path}")
+    database.export_csv()
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--digest", action="store_true", help="Send daily digest")
+    parser.add_argument("--continuous", action="store_true", help="Run in continuous monitoring mode (24/7)")
+    parser.add_argument("--continuous-with-signals", action="store_true", help="Continuous + periodic signal generation")
     args = parser.parse_args()
+    
     if args.digest:
         send_daily_digest()
+        return
+    if args.continuous:
+        run_continuous()
+        return
+    if args.continuous_with_signals:
+        run_continuous_with_signals()
         return
     run()
 

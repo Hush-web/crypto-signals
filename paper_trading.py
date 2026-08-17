@@ -107,39 +107,35 @@ def get_open_paper_trades():
 
 def check_paper_trades(current_prices):
     open_trades = get_open_paper_trades()
-    print(f"\n[DEBUG] === check_paper_trades() called. Found {len(open_trades)} open trades. ===")
-    if not open_trades:
-        print("[DEBUG] No open trades to check.")
-        return
-
+    print(f"\n[DEBUG] Checking {len(open_trades)} open trades...")
+    
+    closed_count = 0
     for trade in open_trades:
         trade_id, coin, action, entry, target, stop = trade
         price = current_prices.get(coin, 0)
-        # Print every trade with its key numbers
-        print(f"[DEBUG] Trade {trade_id}: {coin} {action} | entry={entry:.4f} target={target:.4f} stop={stop:.4f} | current price={price:.4f}")
-
         if price == 0:
-            print(f"[DEBUG] {coin} price is 0, skipping")
             continue
-
         if action == 'BUY':
             if price >= target:
                 close_paper_trade(trade_id, target, 'TARGET')
-                print(f"[DEBUG] {coin} BUY hit TARGET!")
+                closed_count += 1
+                print(f"[DEBUG] {coin} BUY hit TARGET! (entry={entry:.4f}, target={target:.4f}, price={price:.4f})")
             elif price <= stop:
                 close_paper_trade(trade_id, stop, 'STOP_LOSS')
-                print(f"[DEBUG] {coin} BUY hit STOP_LOSS!")
+                closed_count += 1
+                print(f"[DEBUG] {coin} BUY hit STOP_LOSS! (entry={entry:.4f}, stop={stop:.4f}, price={price:.4f})")
         elif action == 'SELL':
             if price <= target:
                 close_paper_trade(trade_id, target, 'TARGET')
-                print(f"[DEBUG] {coin} SELL hit TARGET!")
+                closed_count += 1
+                print(f"[DEBUG] {coin} SELL hit TARGET! (entry={entry:.4f}, target={target:.4f}, price={price:.4f})")
             elif price >= stop:
                 close_paper_trade(trade_id, stop, 'STOP_LOSS')
-                print(f"[DEBUG] {coin} SELL hit STOP_LOSS!")
-        else:
-            print(f"[DEBUG] Unknown action: {action}")
-
-    print("[DEBUG] === check_paper_trades() finished. ===\n")
+                closed_count += 1
+                print(f"[DEBUG] {coin} SELL hit STOP_LOSS! (entry={entry:.4f}, stop={stop:.4f}, price={price:.4f})")
+    
+    if closed_count > 0:
+        print(f"[DEBUG] Closed {closed_count} trade(s) in this cycle.")
 
 def get_performance_summary():
     conn = sqlite3.connect(config.DB_PATH)
