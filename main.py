@@ -12,6 +12,7 @@ import signals as signal_engine
 import telegram
 import paper_trading
 from market_data import get_fear_greed, get_whale_sentiment
+import threading
 
 import os
 from flask import Flask
