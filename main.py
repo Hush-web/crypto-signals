@@ -13,6 +13,15 @@ import telegram
 import paper_trading
 from market_data import get_fear_greed, get_whale_sentiment
 
+import os
+from flask import Flask
+
+app = Flask(__name__)
+
+@app.route('/')
+def health():
+    return "Crypto Bot is running 24/7", 200
+
 BATCH_COUNTER = 1
 
 def get_current_prices():
@@ -214,6 +223,17 @@ def main():
         run_continuous_with_signals()
         return
     run()
-
 if __name__ == '__main__':
-    main()
+    if "--continuous" in sys.argv:
+        # Start Flask server (so Render keeps the service alive)
+        port = int(os.environ.get('PORT', 10000))
+        threading.Thread(target=lambda: app.run(host='0.0.0.0', port=port, debug=False), daemon=True).start()
+        # Start the bot loop
+        run_continuous()
+    elif "--continuous-with-signals" in sys.argv:
+        # Start Flask server
+        port = int(os.environ.get('PORT', 10000))
+        threading.Thread(target=lambda: app.run(host='0.0.0.0', port=port, debug=False), daemon=True).start()
+        run_continuous_with_signals()
+    else:
+        main()
