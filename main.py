@@ -238,3 +238,26 @@ if __name__ == '__main__':
         run_continuous_with_signals()
     else:
         main()
+
+def generate_and_open_trades():
+    """Generate signals and open new paper trades"""
+    results = signal_engine.generate_all_signals(config.COINS)
+    active_signals = []
+    for sig in results:
+        if sig['action'] == 'ERROR':
+            print(f"[main] {sig['coin']}: ERROR")
+            continue
+        if sig['action'] == 'HOLD':
+            continue
+        print(f"[main] {sig['coin']}: {sig['action']} @ {sig['entry_price']:.2f}")
+        signal_id = database.insert_signal(sig)
+        paper_trading.open_paper_trade(signal_id, sig['coin'], sig['action'], sig['entry_price'], sig['target'], sig['stop_loss'])
+        active_signals.append(sig)
+    
+    # 🟢 ADD THIS: Send Telegram alerts
+    if active_signals:
+        global BATCH_COUNTER
+        telegram.send_batch(active_signals, BATCH_COUNTER)
+        BATCH_COUNTER += 1
+    
+    return active_signals

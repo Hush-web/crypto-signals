@@ -21,14 +21,20 @@ def get_signal_tag(confidence, votes):
         return '⚡ MONITORING', '🔍', 'WEAK — Watch only'
 
 def send_telegram(message):
+    print(f"[DEBUG] send_telegram called. Message length: {len(message)}")
     if not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHAT_ID:
+        print("[DEBUG] ❌ Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID")
         return
     url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"
     data = {'chat_id': config.TELEGRAM_CHAT_ID, 'text': message, 'parse_mode': 'HTML'}
     try:
-        requests.post(url, data=data, timeout=10)
-    except:
-        pass
+        resp = requests.post(url, data=data, timeout=10)
+        if resp.status_code == 200:
+            print("[DEBUG] ✅ Telegram message sent successfully")
+        else:
+            print(f"[DEBUG] ❌ Telegram error: {resp.status_code} - {resp.text[:100]}")
+    except Exception as e:
+        print(f"[DEBUG] ❌ Telegram exception: {e}")
 
 def send_poll(question, options=['🟢 UP', '🔴 DOWN']):
     if not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHAT_ID:
@@ -98,8 +104,10 @@ def send_signal(signal, batch_id):
     return True
 
 def send_batch(signals, batch_id):
+    print(f"[DEBUG] send_batch called with {len(signals)} signals, batch_id={batch_id}")
     active = [s for s in signals if s['action'] not in ['HOLD', 'ERROR']]
     if not active:
+        print("[DEBUG] No active signals to send")
         return
     now = datetime.now().strftime('%H:%M:%S')
     header = f"""
