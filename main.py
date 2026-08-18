@@ -1,4 +1,4 @@
-# main.py — with continuous monitoring for 24/7 deployment
+# main.py — Complete orchestrator with continuous monitoring and Telegram
 import sys
 import sqlite3
 import argparse
@@ -13,7 +13,6 @@ import telegram
 import paper_trading
 from market_data import get_fear_greed, get_whale_sentiment
 import threading
-
 import os
 from flask import Flask
 
@@ -113,6 +112,13 @@ def generate_and_open_trades():
         signal_id = database.insert_signal(sig)
         paper_trading.open_paper_trade(signal_id, sig['coin'], sig['action'], sig['entry_price'], sig['target'], sig['stop_loss'])
         active_signals.append(sig)
+    
+    # 🟢 SEND TELEGRAM ALERTS
+    if active_signals:
+        global BATCH_COUNTER
+        telegram.send_batch(active_signals, BATCH_COUNTER)
+        BATCH_COUNTER += 1
+    
     return active_signals
 
 def run_continuous():
@@ -124,19 +130,12 @@ def run_continuous():
     loop_count = 0
     while True:
         try:
-            # Fetch live prices
             prices = get_current_prices()
-            
-            # Check and close any trades that hit TP/SL
             paper_trading.check_paper_trades(prices)
-            
-            # Every 60 loops (~5 minutes), print a heartbeat
             if loop_count % 60 == 0:
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] Heartbeat – monitoring...")
-            
             loop_count += 1
-            time.sleep(5)  # Check every 5 seconds
-            
+            time.sleep(5)
         except KeyboardInterrupt:
             print("\n🔴 Shutting down...")
             break
@@ -151,29 +150,21 @@ def run_continuous_with_signals():
     paper_trading.init_paper_account()
     
     last_signal_time = time.time()
-    signal_interval = 3600  # Generate new signals every hour
+    signal_interval = 3600
     loop_count = 0
     
     while True:
         try:
-            # Fetch live prices
             prices = get_current_prices()
-            
-            # 1. Check and close trades
             paper_trading.check_paper_trades(prices)
-            
-            # 2. Generate new signals periodically
             if time.time() - last_signal_time > signal_interval:
                 print(f"\n[main] Generating new signals at {datetime.now().strftime('%H:%M:%S')}")
                 generate_and_open_trades()
                 last_signal_time = time.time()
-            
             if loop_count % 60 == 0:
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] Heartbeat – monitoring...")
-            
             loop_count += 1
             time.sleep(5)
-            
         except KeyboardInterrupt:
             print("\n🔴 Shutting down...")
             break
@@ -185,25 +176,9 @@ def run():
     """Original run mode – single pass for cron jobs"""
     database.init_db()
     paper_trading.init_paper_account()
-    
     prices = get_current_prices()
     paper_trading.check_paper_trades(prices)
-    
-    results = signal_engine.generate_all_signals(config.COINS)
-    active_signals = []
-    for sig in results:
-        if sig['action'] == 'ERROR':
-            print(f"[main] {sig['coin']}: ERROR")
-            continue
-        if sig['action'] == 'HOLD':
-            print(f"[main] {sig['coin']}: HOLD")
-            continue
-        print(f"[main] {sig['coin']}: {sig['action']} @ {sig['entry_price']:.2f}")
-        signal_id = database.insert_signal(sig)
-        paper_trading.open_paper_trade(signal_id, sig['coin'], sig['action'], sig['entry_price'], sig['target'], sig['stop_loss'])
-        active_signals.append(sig)
-    
-    print(f"[main] Done. {len(active_signals)} signal(s) fired.")
+    generate_and_open_trades()
     paper_trading.print_performance_report()
     database.export_csv()
 
@@ -224,40 +199,15 @@ def main():
         run_continuous_with_signals()
         return
     run()
+
 if __name__ == '__main__':
     if "--continuous" in sys.argv:
-        # Start Flask server (so Render keeps the service alive)
         port = int(os.environ.get('PORT', 10000))
         threading.Thread(target=lambda: app.run(host='0.0.0.0', port=port, debug=False), daemon=True).start()
-        # Start the bot loop
         run_continuous()
     elif "--continuous-with-signals" in sys.argv:
-        # Start Flask server
         port = int(os.environ.get('PORT', 10000))
         threading.Thread(target=lambda: app.run(host='0.0.0.0', port=port, debug=False), daemon=True).start()
         run_continuous_with_signals()
     else:
         main()
-
-def generate_and_open_trades():
-    """Generate signals and open new paper trades"""
-    results = signal_engine.generate_all_signals(config.COINS)
-    active_signals = []
-    for sig in results:
-        if sig['action'] == 'ERROR':
-            print(f"[main] {sig['coin']}: ERROR")
-            continue
-        if sig['action'] == 'HOLD':
-            continue
-        print(f"[main] {sig['coin']}: {sig['action']} @ {sig['entry_price']:.2f}")
-        signal_id = database.insert_signal(sig)
-        paper_trading.open_paper_trade(signal_id, sig['coin'], sig['action'], sig['entry_price'], sig['target'], sig['stop_loss'])
-        active_signals.append(sig)
-    
-    # 🟢 ADD THIS: Send Telegram alerts
-    if active_signals:
-        global BATCH_COUNTER
-        telegram.send_batch(active_signals, BATCH_COUNTER)
-        BATCH_COUNTER += 1
-    
-    return active_signals
